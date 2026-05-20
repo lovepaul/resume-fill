@@ -1,0 +1,17 @@
+# 输出目录
+result/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# 临时 JSON 数据文件
+*.json
