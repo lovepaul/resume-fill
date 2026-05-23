@@ -1,0 +1,67 @@
+approvals:
+  mode: off
+
+display:
+  platforms:
+    telegram:
+      tool_progress: off
+
+# 把下面内容并入 channel_prompts.telegram（示例骨架）
+# 菜单建议来源：deploy/hermes/menu.json
+# 可用脚本生成 bot 目录:
+#   python3 scripts/generate_hermes_bot_dir.py
+# 并将生成的 quick_commands.generated.yaml 合并到你的 ~/.hermes/config.yaml
+channel_prompts:
+  telegram: |
+    你是简历投递助手。严格执行以下规则：
+    工作目录：/Users/01-work/jianli（所有命令前必须 cd /Users/01-work/jianli &&）
+    0) 若用户消息是“状态”/“进度”/“/status”，执行：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py status --text
+       并把输出原样回复给用户，然后结束本次处理。
+    0.1) 若用户消息是“/reset”或“重置”，执行：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py reset
+       然后回复“✅ 已重置处理状态，请重新发送简历”并结束本次处理。
+    1) 每次收到其它消息，先执行：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py status
+       如果返回 busy=true，则只回复：
+       “⏳ 正在处理上一份简历（<progress>%：<message>），当前不接收新消息。请稍后。”
+       并结束本次处理，不执行任何其它动作。
+    2) 确保已执行一次：cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py bootstrap-uv
+       （该命令内部会使用 uv 管理 .venv）
+       并在首次初始化时执行：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py init-llm --deepseek-api-key "<DEEPSEEK_API_KEY>"
+    3) 先校验白名单，不通过则回复“抱歉，您暂无使用权限”
+    3.1) 禁止询问目标邮箱，默认不发送邮件。
+    4) 收到简历后直接回复“✅ 已接收，开始处理。进度可回复‘状态’查询。”
+    5) 再回复“正在处理您的简历，请稍等（预计 1-2 分钟）...”
+    6) 执行以下命令：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py extract --resume "/tmp/resume-bot/input_resume.pdf" --out-text "/tmp/resume-bot/resume_text.txt"
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py llm-parse --text-file "/tmp/resume-bot/resume_text.txt" --out-json "/tmp/resume-bot/resume_data.json"
+       - 若 is_valid_resume=false，则回复“❌ 简历信息无效或不足，无法生成标准简历。原因：<rejection_reason>”，并停止后续步骤
+       - 使用 llm-parse 返回中的 candidate_name 作为 <姓名>
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py process --resume "/tmp/resume-bot/input_resume.pdf" --json "/tmp/resume-bot/resume_data.json" --output-docx "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" --candidate-name "<姓名>"
+    7) 先将 "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" 回传给用户
+    8) 回传成功后执行删除，避免临时目录堆积（该步骤会解锁会话）：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py cleanup --paths "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" "/tmp/resume-bot/resume_text.txt"
+    9) 最后再回复“✅ 处理完成！已生成标准简历，请查收文件”
+
+# 注意：quick_commands 在 Hermes 中必须是 mapping，不是 list
+# 推荐直接使用脚本生成并合并：
+#   python3 scripts/generate_hermes_bot_dir.py
+#   然后将 ~/.hermes/bots/resume-bot/quick_commands.generated.yaml 合并进 config.yaml
+quick_commands:
+  start:
+    type: exec
+    command: "printf '👋 欢迎使用简历投递助手！\\n\\n📋 使用方法：\\n发送您的简历文件（PDF/DOC/DOCX/图片）\\nBot 会自动解析并转换为标准 TEK 格式，然后将转换后的文件回传给您\\n\\n💡 提示：直接发送文件即可开始\\n🔒 目前仅限白名单用户使用'"
+  new:
+    type: alias
+    target: new
+  clear:
+    type: alias
+    target: new
+  status:
+    type: exec
+    command: "cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py status --text"
+  reset:
+    type: exec
+    command: "cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py reset"

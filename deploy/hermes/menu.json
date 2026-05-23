@@ -1,0 +1,39 @@
+{
+  "bot_name": "resume-bot",
+  "telegram": {
+    "custom_menu": true,
+    "tool_progress": false
+  },
+  "menu_commands": [
+    {
+      "command": "/start",
+      "description": "开始使用简历投递助手",
+      "type": "exec",
+      "exec": "printf '👋 欢迎使用简历投递助手！\\n\\n📋 使用方法：\\n发送您的简历文件（PDF/DOC/DOCX/图片）\\nBot 会自动解析并转换为标准 TEK 格式，然后将转换后的文件回传给您\\n\\n💡 提示：直接发送文件即可开始\\n🔒 目前仅限白名单用户使用'"
+    },
+    {
+      "command": "/new",
+      "description": "开启新一次简历处理会话",
+      "type": "alias",
+      "target": "new"
+    },
+    {
+      "command": "/clear",
+      "description": "清空当前会话上下文",
+      "type": "alias",
+      "target": "new"
+    },
+    {
+      "command": "/status",
+      "description": "查看当前处理进度",
+      "type": "exec",
+      "exec": "cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py status --text"
+    },
+    {
+      "command": "/reset",
+      "description": "强制重置卡住状态",
+      "type": "exec",
+      "exec": "cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py reset"
+    }
+  ]
+}

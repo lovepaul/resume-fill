@@ -1,17 +1,42 @@
-# 输出目录
-result/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-
-# macOS
+# ===== OS / Editor =====
 .DS_Store
-
-# IDE
 .idea/
 .vscode/
 
-# 临时 JSON 数据文件
-*.json
+# ===== Python cache / build =====
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+build/
+dist/
+.eggs/
+*.egg-info/
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+ENV/
+bin/
+include/
+lib/
+pyvenv.cfg
+
+# ===== Project runtime artifacts =====
+result/
+.tmp/
+.tmp-bot/
+.resume_bot_ready
+zhangren_*.json
+
+# ===== Logs =====
+*.log
