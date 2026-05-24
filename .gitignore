@@ -40,3 +40,9 @@ zhangren_*.json
 
 # ===== Logs =====
 *.log
+
+# ===== Web app =====
+web/frontend/node_modules/
+web/frontend/dist/
+web/runtime/
+.run/
