@@ -70,7 +70,8 @@ bash /Users/01-work/jianli/scripts/update_hermes_skill.sh --restart-gateway
 ```bash
 python3 scripts/resume_bot_pipeline.py extract \
   --resume "/tmp/resume-bot/input_resume.pdf" \
-  --out-text "/tmp/resume-bot/resume_text.txt"
+  --out-text "/tmp/resume-bot/resume_text.txt" \
+  --require-pdf
 ```
 
 ### Step B: 处理并回传文件
@@ -84,12 +85,14 @@ python3 scripts/resume_bot_pipeline.py process \
   --resume "/tmp/resume-bot/input_resume.pdf" \
   --json "/tmp/resume-bot/resume_data.json" \
   --output-docx "/tmp/resume-bot/张三-TEK-标准简历.docx" \
-  --candidate-name "张三"
+  --candidate-name "张三" \
+  --require-pdf
 ```
 
 说明：
 
 - `llm-parse` 默认调用 DeepSeek `deepseek-chat`（更省成本）
+- Telegram bot 建议开启电子围栏：仅处理 PDF，文字消息与非 PDF 文件只做提示不进入流水线
 - 若 `is_valid_resume=false`，应拒绝生成并回用户原因
 - 默认不发送邮件，直接在 Telegram 回传 DOCX，避免因邮箱配置卡住
 - 附件名与输出名统一为 `姓名-TEK-标准简历.docx`

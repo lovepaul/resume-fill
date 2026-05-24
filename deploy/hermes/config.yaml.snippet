@@ -32,18 +32,26 @@ channel_prompts:
        - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py init-llm --deepseek-api-key "<DEEPSEEK_API_KEY>"
     3) 先校验白名单，不通过则回复“抱歉，您暂无使用权限”
     3.1) 禁止询问目标邮箱，默认不发送邮件。
-    4) 收到简历后直接回复“✅ 已接收，开始处理。进度可回复‘状态’查询。”
-    5) 再回复“正在处理您的简历，请稍等（预计 1-2 分钟）...”
-    6) 执行以下命令：
-       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py extract --resume "/tmp/resume-bot/input_resume.pdf" --out-text "/tmp/resume-bot/resume_text.txt"
+    4) 电子围栏（必须先判断，再决定是否处理）：
+       - 若用户仅发送文字、表情、语音、图片、非文件消息：只回复
+         “📎 请直接发送 PDF 格式的简历文件（.pdf）。\n仅支持 PDF，发送后将自动处理。”
+         然后结束本次处理。
+       - 若用户发送了文件但不是 PDF（如 DOC/DOCX/TXT/ZIP）：只回复
+         “❌ 当前仅支持 PDF 简历，请发送 .pdf 文件后再试。”
+         然后结束本次处理。
+       - 只有在收到 PDF 简历文件时，才允许进入后续步骤。
+    5) 收到 PDF 后直接回复“✅ 已接收 PDF 简历，开始处理。进度可回复‘状态’查询。”
+    6) 再回复“正在处理您的简历，请稍等（预计 1-2 分钟）...”
+    7) 执行以下命令：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py extract --resume "/tmp/resume-bot/input_resume.pdf" --out-text "/tmp/resume-bot/resume_text.txt" --require-pdf
        - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py llm-parse --text-file "/tmp/resume-bot/resume_text.txt" --out-json "/tmp/resume-bot/resume_data.json"
        - 若 is_valid_resume=false，则回复“❌ 简历信息无效或不足，无法生成标准简历。原因：<rejection_reason>”，并停止后续步骤
        - 使用 llm-parse 返回中的 candidate_name 作为 <姓名>
-       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py process --resume "/tmp/resume-bot/input_resume.pdf" --json "/tmp/resume-bot/resume_data.json" --output-docx "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" --candidate-name "<姓名>"
-    7) 先将 "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" 回传给用户
-    8) 回传成功后执行删除，避免临时目录堆积（该步骤会解锁会话）：
+       - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py process --resume "/tmp/resume-bot/input_resume.pdf" --json "/tmp/resume-bot/resume_data.json" --output-docx "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" --candidate-name "<姓名>" --require-pdf
+    8) 先将 "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" 回传给用户
+    9) 回传成功后执行删除，避免临时目录堆积（该步骤会解锁会话）：
        - cd /Users/01-work/jianli && python3 scripts/resume_bot_pipeline.py cleanup --paths "/tmp/resume-bot/<姓名>-TEK-标准简历.docx" "/tmp/resume-bot/resume_text.txt"
-    9) 最后再回复“✅ 处理完成！已生成标准简历，请查收文件”
+    10) 最后再回复“✅ 处理完成！已生成标准简历，请查收文件”
 
 # 注意：quick_commands 在 Hermes 中必须是 mapping，不是 list
 # 推荐直接使用脚本生成并合并：
@@ -52,7 +60,7 @@ channel_prompts:
 quick_commands:
   start:
     type: exec
-    command: "printf '👋 欢迎使用简历投递助手！\\n\\n📋 使用方法：\\n发送您的简历文件（PDF/DOC/DOCX/图片）\\nBot 会自动解析并转换为标准 TEK 格式，然后将转换后的文件回传给您\\n\\n💡 提示：直接发送文件即可开始\\n🔒 目前仅限白名单用户使用'"
+    command: "printf '👋 欢迎使用简历投递助手！\\n\\n📋 使用方法：\\n请直接发送 PDF 简历文件（.pdf）\\nBot 会自动解析并转换为标准 TEK 格式，然后将转换后的文件回传给您\\n\\n⚠️ 当前仅支持 PDF，文字消息或其它格式文件不会处理\\n🔒 目前仅限白名单用户使用'"
   new:
     type: alias
     target: new

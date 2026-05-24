@@ -692,6 +692,13 @@ def extract_resume_text(resume_path: Path) -> str:
     raise ValueError(f"不支持的简历类型: {resume_path.suffix}")
 
 
+def ensure_pdf_resume(resume_path: Path) -> None:
+    if resume_path.suffix.lower() != ".pdf":
+        raise ValueError(
+            f"当前仅允许处理 PDF 简历，收到文件类型: {resume_path.suffix or '无扩展名'}"
+        )
+
+
 def write_text_output(text: str, output_file: Path) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
     output_file.write_text(text, encoding="utf-8")
@@ -871,6 +878,11 @@ def parse_args() -> argparse.Namespace:
     extract_cmd = sub.add_parser("extract", help="提取简历文本到文件")
     extract_cmd.add_argument("--resume", required=True, type=Path)
     extract_cmd.add_argument("--out-text", required=True, type=Path)
+    extract_cmd.add_argument(
+        "--require-pdf",
+        action="store_true",
+        help="仅允许输入 PDF 简历（用于 Telegram 电子围栏场景）",
+    )
 
     llm_parse_cmd = sub.add_parser("llm-parse", help="调用 DeepSeek 解析并校验简历")
     llm_parse_cmd.add_argument("--text-file", required=True, type=Path)
@@ -888,6 +900,11 @@ def parse_args() -> argparse.Namespace:
     )
     process_cmd.add_argument("--candidate-name", type=str)
     process_cmd.add_argument("--skip-email", action="store_true")
+    process_cmd.add_argument(
+        "--require-pdf",
+        action="store_true",
+        help="仅允许输入 PDF 简历（用于 Telegram 电子围栏场景）",
+    )
     process_cmd.add_argument(
         "--keep-temp",
         action="store_true",
@@ -1064,6 +1081,8 @@ def main() -> None:
             )
             if not args.resume.exists():
                 raise FileNotFoundError(f"简历文件不存在: {args.resume}")
+            if args.require_pdf:
+                ensure_pdf_resume(args.resume)
             text = extract_resume_text(args.resume)
             write_text_output(text, args.out_text)
             write_status(
@@ -1182,6 +1201,8 @@ def main() -> None:
             )
             if not args.resume.exists():
                 raise FileNotFoundError(f"简历文件不存在: {args.resume}")
+            if args.require_pdf:
+                ensure_pdf_resume(args.resume)
             if not args.json.exists():
                 raise FileNotFoundError(f"JSON 文件不存在: {args.json}")
 
