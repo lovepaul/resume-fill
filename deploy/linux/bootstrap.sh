@@ -9,19 +9,33 @@ set -euo pipefail
 #   APP_USER=www-data
 #   APP_GROUP=www-data
 #   APP_PORT=8000
-#   APP_DOMAIN=_
+#   APP_DOMAIN=lensmanlucas.com www.lensmanlucas.com
 #   INSTALL_PACKAGES=1
 #   PYTHON_BIN=python3
+#   NVWA_USERNAME=lensman
+#   NVWA_PASSWORD=change_me_nvwa_password
+#   STATS_USERNAME=lensman
+#   STATS_PASSWORD=change_me_stats_password
+#   HERMES_DISTILL_COMMAND=hermes run "distill-docs --input {input_dir} --output {output_json}"
 
 APP_NAME="${APP_NAME:-resume-web}"
 APP_USER="${APP_USER:-www-data}"
 APP_GROUP="${APP_GROUP:-www-data}"
 APP_PORT="${APP_PORT:-8000}"
-APP_DOMAIN="${APP_DOMAIN:-_}"
+APP_DOMAIN="${APP_DOMAIN:-lensmanlucas.com www.lensmanlucas.com}"
 INSTALL_PACKAGES="${INSTALL_PACKAGES:-1}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-APP_TMP_DIR="${APP_TMP_DIR:-/tmp/${APP_NAME}}"
-TMP_RETENTION_MINUTES="${TMP_RETENTION_MINUTES:-60}"
+APP_TMP_DIR="${APP_TMP_DIR:-/var/lib/${APP_NAME}/runtime}"
+UPLOADS_MAX_BYTES="${UPLOADS_MAX_BYTES:-52428800}"
+OUTPUTS_MAX_BYTES="${OUTPUTS_MAX_BYTES:-10485760}"
+DISTILL_MAX_BYTES="${DISTILL_MAX_BYTES:-209715200}"
+NVWA_USERNAME="${NVWA_USERNAME:-lensman}"
+NVWA_PASSWORD="${NVWA_PASSWORD:-change_me_nvwa_password}"
+STATS_USERNAME="${STATS_USERNAME:-lensman}"
+STATS_PASSWORD="${STATS_PASSWORD:-change_me_stats_password}"
+HERMES_DISTILL_COMMAND="${HERMES_DISTILL_COMMAND:-hermes run \"distill-docs --input {input_dir} --output {output_json}\"}"
+NODE_MIN_MAJOR="${NODE_MIN_MAJOR:-18}"
+ALLOW_WEAK_PASSWORDS="${ALLOW_WEAK_PASSWORDS:-0}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 APP_DIR="${APP_DIR:-${REPO_ROOT}}"
@@ -29,6 +43,8 @@ VENV_DIR="${VENV_DIR:-${APP_DIR}/.venv-web}"
 ENV_FILE="${ENV_FILE:-/etc/${APP_NAME}.env}"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 CRON_FILE="/etc/cron.d/${APP_NAME}-tmp-cleanup"
+RUNTIME_CLEANUP_LOG="/var/log/${APP_NAME}-runtime-cleanup.log"
+BACKUP_DIR_ROOT="/var/backups/${APP_NAME}"
 
 SUDO_CMD=""
 if [[ "${EUID}" -ne 0 ]]; then
@@ -37,6 +53,96 @@ fi
 
 log() {
   printf "\n[%s] %s\n" "$(date +'%F %T')" "$*"
+}
+
+is_weak_password() {
+  local value="${1:-}"
+  if [[ "${#value}" -lt 8 ]]; then
+    return 0
+  fi
+  case "${value}" in
+    666666|123456|12345678|password|change_me_stats_password|change_me_nvwa_password)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+validate_security_inputs() {
+  if [[ "${ALLOW_WEAK_PASSWORDS}" == "1" ]]; then
+    log "跳过弱口令校验（ALLOW_WEAK_PASSWORDS=1）"
+    return
+  fi
+
+  if is_weak_password "${NVWA_PASSWORD}"; then
+    echo "错误: NVWA_PASSWORD 过弱，请设置长度>=8的强密码。" >&2
+    echo "如仅本地临时调试，可显式传入 ALLOW_WEAK_PASSWORDS=1。" >&2
+    exit 1
+  fi
+
+  if is_weak_password "${STATS_PASSWORD}"; then
+    echo "错误: STATS_PASSWORD 过弱，请设置长度>=8的强密码。" >&2
+    echo "如仅本地临时调试，可显式传入 ALLOW_WEAK_PASSWORDS=1。" >&2
+    exit 1
+  fi
+}
+
+normalize_domain_list() {
+  local raw="${1:-}"
+  local normalized
+  normalized="$(printf "%s" "${raw}" \
+    | sed -E 's#https?://##g; s#/# #g; s/[[:space:]]+/ /g; s/^ //; s/ $//')"
+  echo "${normalized}"
+}
+
+node_major_version() {
+  if ! command -v node >/dev/null 2>&1; then
+    echo "0"
+    return
+  fi
+
+  local node_version
+  node_version="$(node -v 2>/dev/null || true)"
+  node_version="${node_version#v}"
+  if [[ "${node_version}" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+    echo "${node_version%%.*}"
+    return
+  fi
+
+  echo "0"
+}
+
+install_nodejs_apt_nodesource() {
+  log "检测到 Node.js 版本过低，尝试通过 NodeSource 安装 Node.js 20 LTS"
+  if [[ -n "${SUDO_CMD}" ]]; then
+    curl -fsSL https://deb.nodesource.com/setup_20.x | ${SUDO_CMD} -E bash -
+    ${SUDO_CMD} apt-get install -y nodejs
+  else
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y nodejs
+  fi
+}
+
+ensure_node_compatible() {
+  local node_major
+  node_major="$(node_major_version)"
+
+  if (( node_major >= NODE_MIN_MAJOR )); then
+    return
+  fi
+
+  if command -v apt-get >/dev/null 2>&1; then
+    install_nodejs_apt_nodesource
+    node_major="$(node_major_version)"
+  fi
+
+  if (( node_major < NODE_MIN_MAJOR )); then
+    echo "错误: 当前 Node.js 主版本为 ${node_major}，前端构建（Vite）要求 >= ${NODE_MIN_MAJOR}。" >&2
+    echo "请先安装更高版本 Node.js（建议 20 LTS）后重试。" >&2
+    exit 1
+  fi
 }
 
 install_packages() {
@@ -56,6 +162,7 @@ install_packages() {
 
   if [[ "${#missing_cmds[@]}" -eq 0 ]]; then
     log "检测到系统依赖已安装，跳过安装步骤"
+    ensure_node_compatible
     return
   fi
 
@@ -70,8 +177,7 @@ install_packages() {
       "${PYTHON_BIN}" \
       python3-venv \
       python3-pip \
-      nodejs \
-      npm
+      nodejs
   elif command -v dnf >/dev/null 2>&1; then
     log "使用 dnf 安装系统依赖"
     ${SUDO_CMD} dnf install -y \
@@ -134,6 +240,8 @@ install_packages() {
     log "未识别包管理器，尝试继续执行（缺失命令: ${missing_cmds[*]}）"
     log "若后续失败，请先手动安装: git/nginx/python3/nodejs/npm"
   fi
+
+  ensure_node_compatible
 }
 
 prepare_runtime() {
@@ -146,9 +254,10 @@ prepare_runtime() {
 }
 
 prepare_tmp_dir() {
-  log "准备 Linux 临时目录：${APP_TMP_DIR}"
-  ${SUDO_CMD} mkdir -p "${APP_TMP_DIR}/uploads" "${APP_TMP_DIR}/outputs"
+  log "准备 Linux 运行目录：${APP_TMP_DIR}"
+  ${SUDO_CMD} mkdir -p "${APP_TMP_DIR}/uploads" "${APP_TMP_DIR}/outputs" "${APP_TMP_DIR}/distill-watch"
   ${SUDO_CMD} chown -R "${APP_USER}:${APP_GROUP}" "${APP_TMP_DIR}"
+  ${SUDO_CMD} chmod 750 "${APP_TMP_DIR}" "${APP_TMP_DIR}/uploads" "${APP_TMP_DIR}/outputs" "${APP_TMP_DIR}/distill-watch"
 }
 
 build_frontend() {
@@ -162,23 +271,88 @@ build_frontend() {
   npm run build
 }
 
-write_env_file() {
+backup_existing_configs() {
+  local timestamp backup_dir
+  timestamp="$(date +'%Y%m%d-%H%M%S')"
+  backup_dir="${BACKUP_DIR_ROOT}/${timestamp}"
+
+  ${SUDO_CMD} mkdir -p "${backup_dir}"
+  log "备份现有配置到 ${backup_dir}"
+
   if [[ -f "${ENV_FILE}" ]]; then
-    log "环境文件已存在，跳过覆盖：${ENV_FILE}"
-    return
+    ${SUDO_CMD} cp "${ENV_FILE}" "${backup_dir}/$(basename "${ENV_FILE}")"
+  fi
+  if [[ -f "${SERVICE_FILE}" ]]; then
+    ${SUDO_CMD} cp "${SERVICE_FILE}" "${backup_dir}/$(basename "${SERVICE_FILE}")"
+  fi
+  if [[ -f "${CRON_FILE}" ]]; then
+    ${SUDO_CMD} cp "${CRON_FILE}" "${backup_dir}/$(basename "${CRON_FILE}")"
   fi
 
-  log "生成环境变量文件：${ENV_FILE}"
-  ${SUDO_CMD} tee "${ENV_FILE}" >/dev/null <<'EOF'
+  if [[ -f "/etc/nginx/sites-available/${APP_NAME}.conf" ]]; then
+    ${SUDO_CMD} cp "/etc/nginx/sites-available/${APP_NAME}.conf" "${backup_dir}/${APP_NAME}.nginx.conf"
+  elif [[ -f "/etc/nginx/conf.d/${APP_NAME}.conf" ]]; then
+    ${SUDO_CMD} cp "/etc/nginx/conf.d/${APP_NAME}.conf" "${backup_dir}/${APP_NAME}.nginx.conf"
+  fi
+}
+
+write_env_file() {
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    log "生成环境变量文件：${ENV_FILE}"
+    ${SUDO_CMD} tee "${ENV_FILE}" >/dev/null <<'EOF'
 # 请修改为真实 Key
 DEEPSEEK_API_KEY=replace_me
 # DEEPSEEK_BASE_URL=https://api.deepseek.com/v1/chat/completions
 # DEEPSEEK_MODEL=deepseek-chat
-# WEB_TMP_DIR=/tmp/resume-web
+# WEB_RUNTIME_DIR=/var/lib/resume-web/runtime
 # WEB_FILE_RETENTION_SECONDS=3600
 # WEB_CLEANUP_SCAN_INTERVAL_SECONDS=60
+# WEB_UPLOADS_MAX_BYTES=52428800
+# WEB_OUTPUTS_MAX_BYTES=10485760
+# WEB_LLM_MAX_CONCURRENCY=2
+# WEB_LLM_QUEUE_TIMEOUT_SECONDS=30
+# WEB_NGINX_ACCESS_LOG=/var/log/nginx/access.log
+# WEB_STATS_USERNAME=lensman
+# WEB_STATS_PASSWORD=change_me_stats_password
+# WEB_NVWA_USERNAME=lensman
+# WEB_NVWA_PASSWORD=change_me_nvwa_password
+# WEB_HERMES_DISTILL_COMMAND=hermes run "distill-docs --input {input_dir} --output {output_json}"
+# WEB_DISTILL_MAX_BYTES=209715200
+# DEEPSEEK_HTTP_TIMEOUT_SECONDS=45
+# DEEPSEEK_MAX_RETRIES=2
 EOF
-  ${SUDO_CMD} chmod 600 "${ENV_FILE}"
+    ${SUDO_CMD} chmod 600 "${ENV_FILE}"
+  else
+    log "环境文件已存在，执行增量修复：${ENV_FILE}"
+  fi
+
+  if ! grep -q '^WEB_RUNTIME_DIR=' "${ENV_FILE}"; then
+    echo "WEB_RUNTIME_DIR=${APP_TMP_DIR}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_UPLOADS_MAX_BYTES=' "${ENV_FILE}"; then
+    echo "WEB_UPLOADS_MAX_BYTES=${UPLOADS_MAX_BYTES}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_OUTPUTS_MAX_BYTES=' "${ENV_FILE}"; then
+    echo "WEB_OUTPUTS_MAX_BYTES=${OUTPUTS_MAX_BYTES}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_DISTILL_MAX_BYTES=' "${ENV_FILE}"; then
+    echo "WEB_DISTILL_MAX_BYTES=${DISTILL_MAX_BYTES}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_STATS_USERNAME=' "${ENV_FILE}"; then
+    echo "WEB_STATS_USERNAME=${STATS_USERNAME}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_STATS_PASSWORD=' "${ENV_FILE}"; then
+    echo "WEB_STATS_PASSWORD=${STATS_PASSWORD}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_NVWA_USERNAME=' "${ENV_FILE}"; then
+    echo "WEB_NVWA_USERNAME=${NVWA_USERNAME}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_NVWA_PASSWORD=' "${ENV_FILE}"; then
+    echo "WEB_NVWA_PASSWORD=${NVWA_PASSWORD}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
+  if ! grep -q '^WEB_HERMES_DISTILL_COMMAND=' "${ENV_FILE}"; then
+    printf "WEB_HERMES_DISTILL_COMMAND=%q\n" "${HERMES_DISTILL_COMMAND}" | ${SUDO_CMD} tee -a "${ENV_FILE}" >/dev/null
+  fi
 }
 
 write_systemd_service() {
@@ -207,6 +381,7 @@ EOF
 write_nginx_config() {
   local nginx_conf
   local nginx_enable_link
+  local normalized_domain
 
   if [[ -d /etc/nginx/sites-available ]]; then
     nginx_conf="/etc/nginx/sites-available/${APP_NAME}.conf"
@@ -214,6 +389,27 @@ write_nginx_config() {
   else
     nginx_conf="/etc/nginx/conf.d/${APP_NAME}.conf"
     nginx_enable_link=""
+  fi
+
+  normalized_domain="$(normalize_domain_list "${APP_DOMAIN}")"
+  if [[ -z "${normalized_domain}" ]]; then
+    normalized_domain="lensmanlucas.com www.lensmanlucas.com"
+  fi
+  APP_DOMAIN="${normalized_domain}"
+
+  if [[ -f "${nginx_conf}" ]] && grep -q "ssl_certificate" "${nginx_conf}"; then
+    log "检测到现有 HTTPS 配置，保留证书与重定向，更新 server_name 并补齐 stats 路由"
+    ${SUDO_CMD} sed -i -E "s|^[[:space:]]*server_name[[:space:]]+.*;|    server_name ${APP_DOMAIN};|g" "${nginx_conf}"
+    # 先清理历史/重复 stats/nvwa 路由块，再插入标准块，确保幂等
+    ${SUDO_CMD} sed -i '/^[[:space:]]*location[[:space:]]*=[[:space:]]*\/stats[[:space:]]*{/,/^[[:space:]]*}/d' "${nginx_conf}"
+    ${SUDO_CMD} sed -i '/^[[:space:]]*location[[:space:]]*\/stats\/[[:space:]]*{/,/^[[:space:]]*}/d' "${nginx_conf}"
+    ${SUDO_CMD} sed -i '/^[[:space:]]*location[[:space:]]*=[[:space:]]*\/nvwa[[:space:]]*{/,/^[[:space:]]*}/d' "${nginx_conf}"
+    ${SUDO_CMD} sed -i '/^[[:space:]]*location[[:space:]]*\/nvwa\/[[:space:]]*{/,/^[[:space:]]*}/d' "${nginx_conf}"
+    ${SUDO_CMD} sed -i '/^[[:space:]]*location \/ {/i\    location = /stats {\n        return 302 /stats/;\n    }\n\n    location /stats/ {\n        try_files $uri $uri/ /stats/index.html;\n    }\n\n    location = /nvwa {\n        return 302 /nvwa/;\n    }\n\n    location /nvwa/ {\n        try_files $uri $uri/ /nvwa/index.html;\n    }\n' "${nginx_conf}"
+    if [[ -n "${nginx_enable_link}" ]]; then
+      ${SUDO_CMD} ln -sf "${nginx_conf}" "${nginx_enable_link}"
+    fi
+    return
   fi
 
   log "写入 nginx 配置：${nginx_conf}"
@@ -264,6 +460,22 @@ server {
         proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
+    location = /stats {
+        return 302 /stats/;
+    }
+
+    location /stats/ {
+        try_files \$uri \$uri/ /stats/index.html;
+    }
+
+    location = /nvwa {
+        return 302 /nvwa/;
+    }
+
+    location /nvwa/ {
+        try_files \$uri \$uri/ /nvwa/index.html;
+    }
+
     location / {
         try_files \$uri /index.html;
     }
@@ -279,14 +491,26 @@ EOF
 }
 
 write_tmp_cleanup_cron() {
-  log "写入定时清理任务：${CRON_FILE}"
+  log "写入运行目录定时清理任务：${CRON_FILE}"
   ${SUDO_CMD} tee "${CRON_FILE}" >/dev/null <<EOF
 SHELL=/bin/bash
 PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 
-*/10 * * * * root test -d "${APP_TMP_DIR}" && find "${APP_TMP_DIR}" -type f -mmin +${TMP_RETENTION_MINUTES} -delete && find "${APP_TMP_DIR}" -mindepth 1 -type d -empty -delete
+*/10 * * * * root APP_RUNTIME_DIR="${APP_TMP_DIR}" UPLOADS_MAX_BYTES="${UPLOADS_MAX_BYTES}" OUTPUTS_MAX_BYTES="${OUTPUTS_MAX_BYTES}" bash "${APP_DIR}/deploy/linux/cleanup-runtime-files.sh" >>"${RUNTIME_CLEANUP_LOG}" 2>&1
 EOF
   ${SUDO_CMD} chmod 644 "${CRON_FILE}"
+  ${SUDO_CMD} touch "${RUNTIME_CLEANUP_LOG}"
+  ${SUDO_CMD} chmod 640 "${RUNTIME_CLEANUP_LOG}"
+}
+
+setup_log_maintenance() {
+  log "配置日志定时维护（总量上限 20M）"
+  ${SUDO_CMD} chmod +x "${APP_DIR}/deploy/linux/cleanup-logs.sh" "${APP_DIR}/deploy/linux/setup-log-maintenance.sh" "${APP_DIR}/deploy/linux/cleanup-runtime-files.sh"
+  if [[ -n "${SUDO_CMD}" ]]; then
+    ${SUDO_CMD} env APP_NAME="${APP_NAME}" bash "${APP_DIR}/deploy/linux/setup-log-maintenance.sh"
+  else
+    env APP_NAME="${APP_NAME}" bash "${APP_DIR}/deploy/linux/setup-log-maintenance.sh"
+  fi
 }
 
 start_services() {
@@ -306,8 +530,10 @@ show_result() {
   echo "Service: ${APP_NAME}"
   echo "Port: ${APP_PORT}"
   echo "Domain: ${APP_DOMAIN}"
-  echo "TmpDir: ${APP_TMP_DIR}"
-  echo "TmpCron: ${CRON_FILE} (每 10 分钟清理一次，清理 ${TMP_RETENTION_MINUTES} 分钟前文件)"
+  echo "RuntimeDir: ${APP_TMP_DIR}"
+  echo "RuntimeCron: ${CRON_FILE} (每 10 分钟执行容量治理，uploads<=50MB，outputs<=10MB)"
+  echo "RuntimeCleanupLog: ${RUNTIME_CLEANUP_LOG}"
+  echo "LogCron: /etc/cron.d/${APP_NAME}-log-cleanup (每 10 分钟检测并清理，总日志 <=20M)"
   echo
   echo "下一步（请务必执行）:"
   echo "  1) 编辑环境变量（填真实 Key）:"
@@ -324,13 +550,16 @@ show_result() {
 
 main() {
   install_packages
+  validate_security_inputs
   prepare_runtime
   prepare_tmp_dir
   build_frontend
+  backup_existing_configs
   write_env_file
   write_systemd_service
   write_nginx_config
   write_tmp_cleanup_cron
+  setup_log_maintenance
   start_services
   show_result
 }

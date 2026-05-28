@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Nginx 访问统计</title>
+    <link rel="stylesheet" href="/stats/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card login-card" id="loginCard">
+        <h1>Nginx 访问统计</h1>
+        <p class="muted">请先登录后查看实时与日报统计</p>
+        <form id="loginForm" class="form">
+          <label>
+            用户名
+            <input id="username" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            密码
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">登录</button>
+          <p class="error" id="loginError"></p>
+        </form>
+      </section>
+
+      <section class="dashboard hidden" id="dashboard">
+        <header class="dashboard-head">
+          <div>
+            <h2>lensmanlucas.com 访问报表</h2>
+            <p class="muted" id="generatedAt">--</p>
+          </div>
+          <div class="actions">
+            <input type="date" id="datePicker" />
+            <button id="refreshBtn" type="button">刷新</button>
+            <button id="logoutBtn" type="button" class="ghost">退出</button>
+          </div>
+        </header>
+
+        <section class="metrics" id="metrics"></section>
+
+        <section class="grid">
+          <article class="card">
+            <h3>IP 访问量 Top 20</h3>
+            <table id="ipTable"></table>
+          </article>
+          <article class="card">
+            <h3>路径访问量 Top 20</h3>
+            <table id="pathTable"></table>
+          </article>
+        </section>
+
+        <section class="grid">
+          <article class="card">
+            <h3>状态码分布</h3>
+            <table id="statusTable"></table>
+          </article>
+          <article class="card">
+            <h3>每小时请求量</h3>
+            <table id="hourTable"></table>
+          </article>
+        </section>
+
+        <section class="card">
+          <h3>最近请求（最多 30 条）</h3>
+          <table id="recentTable"></table>
+        </section>
+
+        <section class="grid">
+          <article class="card">
+            <h3>上传文件列表（上限 50MB）</h3>
+            <p class="muted" id="uploadsMeta">--</p>
+            <table id="uploadsTable"></table>
+          </article>
+          <article class="card">
+            <h3>转换输出列表（上限 10MB）</h3>
+            <p class="muted" id="outputsMeta">--</p>
+            <table id="outputsTable"></table>
+          </article>
+        </section>
+      </section>
+    </main>
+    <script src="/stats/app.js" type="module"></script>
+  </body>
+</html>

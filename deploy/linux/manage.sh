@@ -30,8 +30,14 @@ Resume Web 服务管理（APP_NAME=${APP_NAME}）
   restart     重启后端与 nginx
   reload      平滑重载后端与 nginx
   status      查看服务状态
+  logs-all    聚合查看后端 + Nginx + 前端访问日志
   logs        实时查看后端日志（journalctl）
   logs-nginx  实时查看 nginx 错误日志
+  logs-runtime-cleanup 查看运行目录清理日志
+  backup-config 备份当前 env/systemd/nginx/cron 配置
+  rollback-config [backup-id] 回滚到最近或指定备份
+  cleanup-logs 一次性清理历史日志（默认总量<=20M）
+  setup-log-maintenance 配置每10分钟自动检测+清理日志
   help        显示本帮助
 
 常用示例:
@@ -71,6 +77,24 @@ case "${cmd}" in
     ;;
   logs-nginx)
     ${SUDO_CMD} tail -f /var/log/nginx/error.log
+    ;;
+  logs-runtime-cleanup)
+    ${SUDO_CMD} tail -f "/var/log/${APP_NAME}-runtime-cleanup.log"
+    ;;
+  logs-all)
+    ${SUDO_CMD} bash "$(dirname "$0")/logs-all.sh"
+    ;;
+  backup-config)
+    ${SUDO_CMD} bash "$(dirname "$0")/backup-config.sh"
+    ;;
+  rollback-config)
+    ${SUDO_CMD} bash "$(dirname "$0")/rollback-config.sh" "${2:-}"
+    ;;
+  cleanup-logs)
+    ${SUDO_CMD} bash "$(dirname "$0")/cleanup-logs.sh"
+    ;;
+  setup-log-maintenance)
+    ${SUDO_CMD} bash "$(dirname "$0")/setup-log-maintenance.sh"
     ;;
   help|-h|--help|"")
     usage

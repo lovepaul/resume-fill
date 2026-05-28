@@ -1,22 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  API_BASE,
+  LIMITS,
+  readJsonOrThrow,
+  readJsonResponse,
+  STORAGE_KEYS
+} from "./shared/common";
 
-const API_BASE =
-  import.meta.env.VITE_API_BASE_URL && import.meta.env.VITE_API_BASE_URL.trim()
-    ? import.meta.env.VITE_API_BASE_URL.trim()
-    : "";
-const HISTORY_STORAGE_KEY = "resume_converter_done_history_v1";
-const MAX_HISTORY_ITEMS = 10;
-
-async function readJsonResponse(resp) {
-  const raw = await resp.text();
-  if (!raw.trim()) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return null;
-  }
+function formatHistoryName(jobData, fallbackName) {
+  const outputName = typeof jobData?.output_name === "string" ? jobData.output_name.trim() : "";
+  if (!outputName) return fallbackName || "未命名文件";
+  return outputName.replace(/\.docx$/i, "");
 }
 
 function App() {
@@ -27,19 +21,25 @@ function App() {
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [deletingJobId, setDeletingJobId] = useState("");
+  const [isCurrentDownloading, setIsCurrentDownloading] = useState(false);
+  const [downloadingHistoryIds, setDownloadingHistoryIds] = useState([]);
+  const [isCurrentCooldown, setIsCurrentCooldown] = useState(false);
+  const [cooldownHistoryIds, setCooldownHistoryIds] = useState([]);
   const timerRef = useRef(null);
   const apiKeyRef = useRef("");
   const currentUploadNameRef = useRef("");
+  const currentCooldownTimerRef = useRef(null);
+  const historyCooldownTimersRef = useRef({});
 
   useEffect(() => {
-    const stored = window.sessionStorage.getItem("resume_converter_deepseek_key") || "";
+    const stored = window.sessionStorage.getItem(STORAGE_KEYS.apiKey) || "";
     setApiKey(stored);
     apiKeyRef.current = stored.trim();
-    const rawHistory = window.sessionStorage.getItem(HISTORY_STORAGE_KEY) || "[]";
+    const rawHistory = window.sessionStorage.getItem(STORAGE_KEYS.history) || "[]";
     try {
       const parsed = JSON.parse(rawHistory);
       if (Array.isArray(parsed)) {
-        setHistory(parsed.slice(0, MAX_HISTORY_ITEMS));
+        setHistory(parsed.slice(0, LIMITS.maxHistoryItems));
       }
     } catch {
       setHistory([]);
@@ -60,15 +60,45 @@ function App() {
   };
 
   useEffect(() => {
-    return () => clearPoll();
+    return () => {
+      clearPoll();
+      if (currentCooldownTimerRef.current) {
+        window.clearTimeout(currentCooldownTimerRef.current);
+        currentCooldownTimerRef.current = null;
+      }
+      Object.values(historyCooldownTimersRef.current).forEach((timerId) => {
+        window.clearTimeout(timerId);
+      });
+      historyCooldownTimersRef.current = {};
+    };
   }, []);
+
+  const startCurrentDownloadCooldown = () => {
+    setIsCurrentCooldown(true);
+    if (currentCooldownTimerRef.current) {
+      window.clearTimeout(currentCooldownTimerRef.current);
+    }
+    currentCooldownTimerRef.current = window.setTimeout(() => {
+      setIsCurrentCooldown(false);
+      currentCooldownTimerRef.current = null;
+    }, LIMITS.downloadCooldownMs);
+  };
+
+  const startHistoryDownloadCooldown = (itemId) => {
+    setCooldownHistoryIds((prev) => (prev.includes(itemId) ? prev : [...prev, itemId]));
+    const oldTimer = historyCooldownTimersRef.current[itemId];
+    if (oldTimer) {
+      window.clearTimeout(oldTimer);
+    }
+    historyCooldownTimersRef.current[itemId] = window.setTimeout(() => {
+      setCooldownHistoryIds((prev) => prev.filter((id) => id !== itemId));
+      delete historyCooldownTimersRef.current[itemId];
+    }, LIMITS.downloadCooldownMs);
+  };
 
   const fetchJob = async (jobId) => {
     const resp = await fetch(`${API_BASE}/api/jobs/${jobId}`);
-    const data = await readJsonResponse(resp);
-    if (!resp.ok) {
-      throw new Error(data?.detail || `获取任务状态失败（HTTP ${resp.status}）`);
-    }
+    const data = await readJsonOrThrow(resp, "获取任务状态失败");
     if (!data) {
       throw new Error("服务返回为空，无法读取任务状态");
     }
@@ -87,7 +117,7 @@ function App() {
         clearPoll();
         setIsSubmitting(false);
       });
-    }, 1500);
+    }, LIMITS.pollingIntervalMs);
   };
 
   const handleUpload = async (event) => {
@@ -108,10 +138,7 @@ function App() {
         },
         body: formData
       });
-      const data = await readJsonResponse(resp);
-      if (!resp.ok) {
-        throw new Error(data?.detail || `提交失败（HTTP ${resp.status}）`);
-      }
+      const data = await readJsonOrThrow(resp, "提交失败");
       if (!data?.job_id) {
         throw new Error("服务未返回任务 ID，请稍后重试");
       }
@@ -137,16 +164,16 @@ function App() {
     }
     const nextItem = {
       id: job.id,
-      sourceName: currentUploadNameRef.current || "未命名文件",
+      sourceName: formatHistoryName(job, currentUploadNameRef.current),
       downloadUrl: job.download_url,
       finishedAt: new Date().toISOString()
     };
     setHistory((prev) => {
       const merged = [nextItem, ...prev.filter((item) => item.id !== job.id)].slice(
         0,
-        MAX_HISTORY_ITEMS
+        LIMITS.maxHistoryItems
       );
-      window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(merged));
+      window.sessionStorage.setItem(STORAGE_KEYS.history, JSON.stringify(merged));
       return merged;
     });
   }, [job]);
@@ -161,7 +188,7 @@ function App() {
       }
       setHistory((prev) => {
         const next = prev.filter((item) => item.id !== itemId);
-        window.sessionStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(next));
+        window.sessionStorage.setItem(STORAGE_KEYS.history, JSON.stringify(next));
         return next;
       });
       if (job?.id === itemId) {
@@ -171,6 +198,81 @@ function App() {
       setError(e.message || "删除失败");
     } finally {
       setDeletingJobId("");
+    }
+  };
+
+  const triggerBrowserDownload = async (downloadUrl, fallbackName) => {
+    const resp = await fetch(`${API_BASE}${downloadUrl}`);
+    if (!resp.ok) {
+      const data = await readJsonResponse(resp);
+      const detail = data?.detail || `下载失败（HTTP ${resp.status}）`;
+      const error = new Error(detail);
+      error.status = resp.status;
+      throw error;
+    }
+
+    const blob = await resp.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = objectUrl;
+    anchor.download = `${fallbackName || "resume"}.docx`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.URL.revokeObjectURL(objectUrl);
+  };
+
+  const handleHistoryDownload = async (item) => {
+    if (downloadingHistoryIds.includes(item.id) || cooldownHistoryIds.includes(item.id)) return;
+    setDownloadingHistoryIds((prev) => [...prev, item.id]);
+    try {
+      setError("");
+      await triggerBrowserDownload(item.downloadUrl, item.sourceName);
+    } catch (e) {
+      const message = e?.message || "下载失败";
+      if (message.includes("任务不存在") || message.includes("输出文件不存在")) {
+        setError("文件已经被清理，请重新转换。");
+        setHistory((prev) => {
+          const next = prev.filter((historyItem) => historyItem.id !== item.id);
+          window.sessionStorage.setItem(STORAGE_KEYS.history, JSON.stringify(next));
+          return next;
+        });
+        if (job?.id === item.id) {
+          setJob(null);
+        }
+        return;
+      }
+      setError(message);
+    } finally {
+      setDownloadingHistoryIds((prev) => prev.filter((id) => id !== item.id));
+      startHistoryDownloadCooldown(item.id);
+    }
+  };
+
+  const handleCurrentJobDownload = async () => {
+    if (!job?.download_url || isCurrentDownloading || isCurrentCooldown) return;
+    setIsCurrentDownloading(true);
+    try {
+      setError("");
+      await triggerBrowserDownload(job.download_url, formatHistoryName(job, "resume"));
+    } catch (e) {
+      const message = e?.message || "下载失败";
+      if (message.includes("任务不存在") || message.includes("输出文件不存在")) {
+        setError("文件已经被清理，请重新转换。");
+        if (job?.id) {
+          setHistory((prev) => {
+            const next = prev.filter((historyItem) => historyItem.id !== job.id);
+            window.sessionStorage.setItem(STORAGE_KEYS.history, JSON.stringify(next));
+            return next;
+          });
+        }
+        setJob(null);
+        return;
+      }
+      setError(message);
+    } finally {
+      setIsCurrentDownloading(false);
+      startCurrentDownloadCooldown();
     }
   };
 
@@ -217,7 +319,7 @@ function App() {
                   const nextKey = e.target.value;
                   setApiKey(nextKey);
                   apiKeyRef.current = nextKey.trim();
-                  window.sessionStorage.setItem("resume_converter_deepseek_key", nextKey);
+                  window.sessionStorage.setItem(STORAGE_KEYS.apiKey, nextKey);
                 }}
               />
             </div>
@@ -277,9 +379,14 @@ function App() {
             </ul>
 
             {job?.status === "done" ? (
-              <a className="button-primary download-btn" href={`${API_BASE}${job.download_url}`}>
-                下载 DOCX
-              </a>
+              <button
+                className="button-primary download-btn"
+                type="button"
+                disabled={isCurrentDownloading || isCurrentCooldown}
+                onClick={handleCurrentJobDownload}
+              >
+                {isCurrentDownloading ? "下载中..." : isCurrentCooldown ? "请稍候..." : "下载 DOCX"}
+              </button>
             ) : (
               <p className="hint">转换完成后会在这里显示下载按钮。</p>
             )}
@@ -297,7 +404,7 @@ function App() {
               <p className="hint">当前会话还没有已完成的简历。</p>
             ) : (
               <ul className="history-list">
-                {history.slice(0, MAX_HISTORY_ITEMS).map((item) => (
+                {history.slice(0, LIMITS.maxHistoryItems).map((item) => (
                   <li key={item.id} className="history-item">
                     <div className="history-main">
                       <p className="history-name">{item.sourceName}</p>
@@ -306,13 +413,26 @@ function App() {
                       </p>
                     </div>
                     <div className="history-actions">
-                      <a className="button-primary history-btn" href={`${API_BASE}${item.downloadUrl}`}>
-                        下载
-                      </a>
+                      <button
+                        type="button"
+                        className="button-primary history-btn"
+                        disabled={downloadingHistoryIds.includes(item.id) || cooldownHistoryIds.includes(item.id)}
+                        onClick={() => handleHistoryDownload(item)}
+                      >
+                        {downloadingHistoryIds.includes(item.id)
+                          ? "下载中..."
+                          : cooldownHistoryIds.includes(item.id)
+                            ? "请稍候..."
+                            : "下载"}
+                      </button>
                       <button
                         type="button"
                         className="button-danger history-btn"
-                        disabled={deletingJobId === item.id}
+                        disabled={
+                          deletingJobId === item.id ||
+                          downloadingHistoryIds.includes(item.id) ||
+                          cooldownHistoryIds.includes(item.id)
+                        }
                         onClick={() => handleDeleteHistoryItem(item.id)}
                       >
                         {deletingJobId === item.id ? "删除中..." : "删除"}

@@ -5,11 +5,12 @@ set -euo pipefail
 # 用法：
 #   bash install-from-github.sh
 #   APP_REPO=https://github.com/xxx/yyy.git APP_BRANCH=main bash install-from-github.sh
-#   APP_DIR=/opt/resume-fill APP_DOMAIN=your.domain.com sudo -E bash install-from-github.sh
+#   APP_DIR=/opt/resume-fill APP_DOMAIN=lensmanlucas.com sudo -E bash install-from-github.sh
 
 APP_REPO="${APP_REPO:-https://github.com/lovepaul/resume-fill.git}"
 APP_BRANCH="${APP_BRANCH:-main}"
 APP_DIR="${APP_DIR:-/opt/resume-fill}"
+APP_DOMAIN="${APP_DOMAIN:-lensmanlucas.com www.lensmanlucas.com}"
 
 SUDO_CMD=""
 if [[ "${EUID}" -ne 0 ]]; then
@@ -62,18 +63,49 @@ sync_repo() {
 run_bootstrap() {
   log "执行 Linux 全自动部署脚本"
   ${SUDO_CMD} chmod +x "${APP_DIR}/deploy/linux/bootstrap.sh" "${APP_DIR}/deploy/linux/manage.sh"
-  ${SUDO_CMD} \
-    APP_NAME="${APP_NAME:-resume-web}" \
-    APP_USER="${APP_USER:-www-data}" \
-    APP_GROUP="${APP_GROUP:-www-data}" \
-    APP_PORT="${APP_PORT:-8000}" \
-    APP_DOMAIN="${APP_DOMAIN:-_}" \
-    INSTALL_PACKAGES="${INSTALL_PACKAGES:-1}" \
-    APP_DIR="${APP_DIR}" \
-    PYTHON_BIN="${PYTHON_BIN:-python3}" \
-    APP_TMP_DIR="${APP_TMP_DIR:-/tmp/resume-web}" \
-    TMP_RETENTION_MINUTES="${TMP_RETENTION_MINUTES:-60}" \
-    bash "${APP_DIR}/deploy/linux/bootstrap.sh"
+  if [[ -n "${SUDO_CMD}" ]]; then
+    ${SUDO_CMD} env \
+      APP_NAME="${APP_NAME:-resume-web}" \
+      APP_USER="${APP_USER:-www-data}" \
+      APP_GROUP="${APP_GROUP:-www-data}" \
+      APP_PORT="${APP_PORT:-8000}" \
+      APP_DOMAIN="${APP_DOMAIN}" \
+      INSTALL_PACKAGES="${INSTALL_PACKAGES:-1}" \
+      APP_DIR="${APP_DIR}" \
+      PYTHON_BIN="${PYTHON_BIN:-python3}" \
+      APP_TMP_DIR="${APP_TMP_DIR:-/var/lib/resume-web/runtime}" \
+      UPLOADS_MAX_BYTES="${UPLOADS_MAX_BYTES:-52428800}" \
+      OUTPUTS_MAX_BYTES="${OUTPUTS_MAX_BYTES:-10485760}" \
+      DISTILL_MAX_BYTES="${DISTILL_MAX_BYTES:-209715200}" \
+      NVWA_USERNAME="${NVWA_USERNAME:-lensman}" \
+      NVWA_PASSWORD="${NVWA_PASSWORD:-change_me_nvwa_password}" \
+      STATS_USERNAME="${STATS_USERNAME:-lensman}" \
+      STATS_PASSWORD="${STATS_PASSWORD:-change_me_stats_password}" \
+      ALLOW_WEAK_PASSWORDS="${ALLOW_WEAK_PASSWORDS:-0}" \
+      HERMES_DISTILL_COMMAND="${HERMES_DISTILL_COMMAND:-hermes run \"distill-docs --input {input_dir} --output {output_json}\"}" \
+      bash "${APP_DIR}/deploy/linux/bootstrap.sh"
+  else
+    env \
+      APP_NAME="${APP_NAME:-resume-web}" \
+      APP_USER="${APP_USER:-www-data}" \
+      APP_GROUP="${APP_GROUP:-www-data}" \
+      APP_PORT="${APP_PORT:-8000}" \
+      APP_DOMAIN="${APP_DOMAIN}" \
+      INSTALL_PACKAGES="${INSTALL_PACKAGES:-1}" \
+      APP_DIR="${APP_DIR}" \
+      PYTHON_BIN="${PYTHON_BIN:-python3}" \
+      APP_TMP_DIR="${APP_TMP_DIR:-/var/lib/resume-web/runtime}" \
+      UPLOADS_MAX_BYTES="${UPLOADS_MAX_BYTES:-52428800}" \
+      OUTPUTS_MAX_BYTES="${OUTPUTS_MAX_BYTES:-10485760}" \
+      DISTILL_MAX_BYTES="${DISTILL_MAX_BYTES:-209715200}" \
+      NVWA_USERNAME="${NVWA_USERNAME:-lensman}" \
+      NVWA_PASSWORD="${NVWA_PASSWORD:-change_me_nvwa_password}" \
+      STATS_USERNAME="${STATS_USERNAME:-lensman}" \
+      STATS_PASSWORD="${STATS_PASSWORD:-change_me_stats_password}" \
+      ALLOW_WEAK_PASSWORDS="${ALLOW_WEAK_PASSWORDS:-0}" \
+      HERMES_DISTILL_COMMAND="${HERMES_DISTILL_COMMAND:-hermes run \"distill-docs --input {input_dir} --output {output_json}\"}" \
+      bash "${APP_DIR}/deploy/linux/bootstrap.sh"
+  fi
 }
 
 main() {

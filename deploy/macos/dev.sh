@@ -14,6 +14,7 @@ VENV_DIR="${VENV_DIR:-${REPO_ROOT}/.venv-web}"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 API_BASE_URL="${API_BASE_URL:-http://127.0.0.1:${BACKEND_PORT}}"
+WEB_RUNTIME_DIR="${WEB_RUNTIME_DIR:-${REPO_ROOT}/.runtime/resume-web}"
 
 RUN_DIR="${REPO_ROOT}/.run/macos-dev"
 LOG_DIR="${RUN_DIR}/logs"
@@ -28,6 +29,7 @@ log() {
 
 ensure_dirs() {
   mkdir -p "${LOG_DIR}"
+  mkdir -p "${WEB_RUNTIME_DIR}/uploads" "${WEB_RUNTIME_DIR}/outputs"
 }
 
 pid_running() {
@@ -67,10 +69,10 @@ start_backend() {
     return
   fi
   log "启动后端 FastAPI（端口 ${BACKEND_PORT}）"
-  nohup "${VENV_DIR}/bin/python" -m uvicorn web.backend.app:app \
+  nohup env WEB_RUNTIME_DIR="${WEB_RUNTIME_DIR}" "${VENV_DIR}/bin/python" -m uvicorn web.backend.app:app \
     --host 0.0.0.0 \
     --port "${BACKEND_PORT}" \
-    --reload >"${BACKEND_LOG_FILE}" 2>&1 &
+    --reload >"${BACKEND_LOG_FILE}" 2>&1 < /dev/null &
   echo $! >"${BACKEND_PID_FILE}"
 }
 

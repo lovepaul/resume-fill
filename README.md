@@ -1,16 +1,44 @@
 # resume-bot
 
-可安装即用的 Hermes Skill：Telegram 收简历 → TEK 模板标准化 → 回传 DOCX（默认不发邮件）。
+一个双形态项目：
 
-## 核心能力
+- **Hermes Skill**：Telegram 收简历 -> 解析 -> 生成 TEK DOCX -> 回传
+- **Web 应用**：上传简历后在线转换，含 `/stats` 与 `/nvwa` 管理页
 
-- 支持 PDF / DOCX / TXT 简历文本提取
-- 将结构化 JSON 填充到 `muban/简历模板 TEK.docx`
-- 使用 himalaya 发送带附件邮件
-- 更新 `tracker.json` 和 `errors.log`
-- 适配 Telegram + Hermes channel_prompts 工作流
+## 导航
 
-## 快速开始
+- [阅读建议](#阅读建议)
+- [Web 子项目入口](#web-子项目入口)
+- [Hermes Skill 入口](#hermes-skill-入口)
+- [Hermes 快速开始](#hermes-快速开始)
+- [Hermes 一次性配置](#hermes-一次性配置)
+- [标准流水线命令](#标准流水线命令)
+- [项目结构](#项目结构)
+- [License](#license)
+
+## 阅读建议
+
+- 只关心 Web 部署与运维：先读 `web/README.md`
+- 只关心 Telegram/Hermes：先读本文件的 Hermes 章节
+- 想看架构演进：读 `web/ARCHITECTURE_BASELINE.md` 与 `web/IMPLEMENTATION_ROADMAP.md`
+
+## Web 子项目入口
+
+- Web 总文档：`web/README.md`
+- 架构基线：`web/ARCHITECTURE_BASELINE.md`
+- 实施路线图：`web/IMPLEMENTATION_ROADMAP.md`
+- 设计说明：`web/DESIGN.md`
+- 后端入口：`web/backend/app.py`
+- 前端入口：`web/frontend/src/App.jsx`
+- Linux 部署入口：`deploy/linux/install-from-github.sh`
+
+## Hermes Skill 入口
+
+- 技能入口：`SKILL.md`
+- 核心流水线：`scripts/resume_bot_pipeline.py`
+- 部署配置：`deploy/hermes/README.md`
+
+## Hermes 快速开始
 
 ```bash
 python3 scripts/resume_bot_pipeline.py bootstrap-uv
@@ -18,18 +46,20 @@ python3 scripts/resume_bot_pipeline.py init-llm --deepseek-api-key "<DEEPSEEK_AP
 python3 scripts/resume_bot_pipeline.py --help
 ```
 
-`resume_bot_pipeline.py` 会自动使用 `uv` 创建并复用当前 skill 的 `.venv`，首次自动安装依赖，后续无需重复安装。
-若仓库存在 `requirements.lock.txt`，会优先按锁定版本安装，保证不同 Hermes 节点环境一致。
-如未安装 `uv`，请先参考官方文档安装：<https://docs.astral.sh/uv/getting-started/installation/>
+说明：
+
+- `resume_bot_pipeline.py` 会自动使用 `uv` 创建并复用 `.venv`
+- 存在 `requirements.lock.txt` 时优先按锁定版本安装
+- 未安装 `uv` 可参考 [官方安装文档](https://docs.astral.sh/uv/getting-started/installation/)
 
 ## Hermes 一次性配置
 
-参考目录 `deploy/hermes/`：
+目录：`deploy/hermes/`
 
 - `env.sample`：`.env` 变量示例
 - `config.yaml.snippet`：`config.yaml` 合并片段
 - `menu.json`：Telegram 菜单单一配置源
-- `README.md`：集成步骤与命令示例
+- `README.md`：完整集成步骤
 
 生成 bot 目录（含 menu 副本与 quick_commands 片段）：
 
@@ -56,7 +86,7 @@ python3 scripts/resume_bot_pipeline.py llm-parse \
   --text-file "/tmp/resume-bot/resume_text.txt" \
   --out-json "/tmp/resume-bot/resume_data.json"
 
-# 3) 生成并发送
+# 3) 生成并发送（默认不发邮件）
 python3 scripts/resume_bot_pipeline.py process \
   --resume "/tmp/resume-bot/input_resume.pdf" \
   --json "/tmp/resume-bot/resume_data.json" \
@@ -64,15 +94,16 @@ python3 scripts/resume_bot_pipeline.py process \
   --candidate-name "张三"
 ```
 
-默认会自动删除临时输入文件（上传原简历、`resume_data.json`、`resume_email.mml`），避免 `/tmp/resume-bot/` 堆积。
+附加说明：
 
-默认不发邮件，直接在 Telegram 回传文件。若需要邮件发送，显式追加：
+- 默认自动清理临时输入文件，避免 `/tmp/resume-bot/` 堆积
+- 若需邮件发送，显式追加：
 
 ```bash
 --enable-email --to-email "target@example.com"
 ```
 
-回传 Telegram 完成后，可再执行：
+- 回传 Telegram 完成后，可手动清理残留：
 
 ```bash
 python3 scripts/resume_bot_pipeline.py cleanup \
@@ -84,20 +115,21 @@ python3 scripts/resume_bot_pipeline.py cleanup \
 ```text
 .
 ├── SKILL.md
-├── fill_resume.py
 ├── scripts/
-│   └── resume_bot_pipeline.py
+│   ├── resume_bot_pipeline.py
+│   ├── generate_hermes_bot_dir.py
+│   └── update_hermes_skill.sh
 ├── deploy/
-│   └── hermes/
-│       ├── README.md
-│       ├── env.sample
-│       └── config.yaml.snippet
+│   ├── hermes/
+│   └── linux/
 ├── src/
-│   ├── config.py
 │   ├── extractor.py
 │   ├── filler.py
-│   ├── utils.py
-│   └── test_data.py
+│   └── ...
+├── web/
+│   ├── README.md
+│   ├── backend/
+│   └── frontend/
 └── muban/
     └── 简历模板 TEK.docx
 ```

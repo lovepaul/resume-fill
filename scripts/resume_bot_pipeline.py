@@ -52,6 +52,8 @@ SESSION_LOCK_PATH = TMP_DIR / ".processing.lock"
 STATUS_PATH = TMP_DIR / "status.json"
 DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1/chat/completions"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
+DEEPSEEK_HTTP_TIMEOUT_SECONDS = max(10, int(os.environ.get("DEEPSEEK_HTTP_TIMEOUT_SECONDS", "45")))
+DEEPSEEK_MAX_RETRIES = max(1, int(os.environ.get("DEEPSEEK_MAX_RETRIES", "2")))
 LOCK_STALE_SECONDS = int(os.environ.get("RESUME_BOT_LOCK_STALE_SECONDS", "900"))
 CURRENT_PROCESS_HAS_LOCK = False
 
@@ -273,7 +275,13 @@ def validate_resume_data_schema(resume_data: dict[str, Any]) -> None:
 
 
 def validate_llm_payload_schema(payload: dict[str, Any]) -> None:
-    for key in ["is_valid_resume", "rejection_reason", "candidate_name", "resume_data"]:
+    for key in [
+        "is_valid_resume",
+        "rejection_reason",
+        "candidate_name",
+        "candidate_phone",
+        "resume_data",
+    ]:
         if key not in payload:
             raise ValueError(f"LLM 输出缺少字段: {key}")
     if not isinstance(payload["is_valid_resume"], bool):
@@ -282,6 +290,8 @@ def validate_llm_payload_schema(payload: dict[str, Any]) -> None:
         raise ValueError("rejection_reason 必须是字符串")
     if not isinstance(payload["candidate_name"], str):
         raise ValueError("candidate_name 必须是字符串")
+    if not isinstance(payload["candidate_phone"], str):
+        raise ValueError("candidate_phone 必须是字符串")
     if not isinstance(payload["resume_data"], dict):
         raise ValueError("resume_data 必须是对象")
     validate_resume_data_schema(payload["resume_data"])
@@ -311,14 +321,24 @@ def call_deepseek_chat_json(
         },
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            raw = resp.read().decode("utf-8")
-    except urllib.error.HTTPError as e:
-        detail = e.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"DeepSeek API HTTP {e.code}: {detail}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"DeepSeek API 连接失败: {e}") from e
+    last_error: Exception | None = None
+    for attempt in range(1, DEEPSEEK_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(req, timeout=DEEPSEEK_HTTP_TIMEOUT_SECONDS) as resp:
+                raw = resp.read().decode("utf-8")
+            break
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", errors="ignore")
+            last_error = RuntimeError(f"DeepSeek API HTTP {e.code}: {detail}")
+        except urllib.error.URLError as e:
+            last_error = RuntimeError(f"DeepSeek API 连接失败: {e}")
+
+        if attempt < DEEPSEEK_MAX_RETRIES:
+            time.sleep(min(2 * attempt, 5))
+    else:
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("DeepSeek API 调用失败")
 
     response_obj = json.loads(raw)
     choices = response_obj.get("choices", [])
@@ -348,7 +368,7 @@ def repair_llm_payload_once(
 
 【目标规则】
 1) 顶层字段必须且只能是：
-   is_valid_resume(boolean), rejection_reason(string), candidate_name(string), resume_data(object)
+   is_valid_resume(boolean), rejection_reason(string), candidate_name(string), candidate_phone(string), resume_data(object)
 2) resume_data 必须且只能包含：
    resource_info(object), summary_items(array<string>), education(array<object>),
    employment_history(array<object>), roles(array<object>), projects(array<object>)
@@ -379,6 +399,7 @@ def repair_llm_payload_once(
 def call_deepseek_resume_parser(
     resume_text: str,
     llm_cfg: dict[str, str],
+    source_filename: str = "",
 ) -> dict[str, Any]:
     truncated = resume_text[:50000]
     system_prompt = (
@@ -393,11 +414,12 @@ def call_deepseek_resume_parser(
 2) 修复明显语义错误：例如时间格式混乱、职位/公司字段错位、句子残缺导致语义不通。
 3) 不得凭空捏造经历，不得补充原文没有的事实；只允许基于上下文做最小必要修正。
 4) 如果某段信息无法可靠判断，保留原意并在结构化字段中使用保守值（空字符串或空数组）。
-5) 姓名字段优先使用可置信的人名；无法确定时填“候选人”。
+5) 姓名字段必须优先提取真实中文姓名，优先级：简历标题/个人信息 > 联系方式附近 > 文件名线索；仅在确实无法判断时填“候选人”。
+6) 手机号字段必须提取中国大陆手机号（1[3-9]开头共11位）；允许对空格、短横线、+86 前缀做归一化后输出11位数字；无法可靠提取则填空字符串 ""，严禁编造。
 
 【硬性格式要求】
 1) 顶层字段必须且只能是：
-   is_valid_resume(boolean), rejection_reason(string), candidate_name(string), resume_data(object)
+   is_valid_resume(boolean), rejection_reason(string), candidate_name(string), candidate_phone(string), resume_data(object)
 2) resume_data 必须且只能包含：
    resource_info(object), summary_items(array<string>), education(array<object>),
    employment_history(array<object>), roles(array<object>), projects(array<object>)
@@ -427,6 +449,7 @@ def call_deepseek_resume_parser(
   "is_valid_resume": true,
   "rejection_reason": "",
   "candidate_name": "张三",
+  "candidate_phone": "13800000000",
   "resume_data": {{
     "resource_info": {{
       "city": "",
@@ -443,6 +466,9 @@ def call_deepseek_resume_parser(
     "projects": []
   }}
 }}
+
+源文件名如下（可用于辅助识别姓名/手机号，不得凭空编造）：
+{source_filename}
 
 简历原文如下：
 {truncated}
@@ -466,13 +492,16 @@ def call_deepseek_resume_parser(
 
 def normalize_resume_data(payload: dict[str, Any]) -> dict[str, Any]:
     if "resume_data" in payload:
-        validate_llm_payload_schema(payload)
-        return payload
+        normalized_payload = dict(payload)
+        normalized_payload.setdefault("candidate_phone", "")
+        validate_llm_payload_schema(normalized_payload)
+        return normalized_payload
     # 兼容旧格式：直接就是 resume_data
     return {
         "is_valid_resume": True,
         "rejection_reason": "",
         "candidate_name": "候选人",
+        "candidate_phone": "",
         "resume_data": payload,
     }
 
@@ -1118,7 +1147,11 @@ def main() -> None:
                 message="正在调用 DeepSeek 解析简历",
             )
             text = args.text_file.read_text(encoding="utf-8")
-            parsed = call_deepseek_resume_parser(text, llm_cfg=llm_cfg)
+            parsed = call_deepseek_resume_parser(
+                text,
+                llm_cfg=llm_cfg,
+                source_filename=args.text_file.name,
+            )
             payload = normalize_resume_data(parsed)
             args.out_json.parent.mkdir(parents=True, exist_ok=True)
             args.out_json.write_text(
@@ -1154,6 +1187,7 @@ def main() -> None:
                         "out_json": str(args.out_json),
                         "is_valid_resume": is_valid,
                         "candidate_name": payload.get("candidate_name", "候选人"),
+                        "candidate_phone": payload.get("candidate_phone", ""),
                         "rejection_reason": payload.get("rejection_reason", ""),
                     },
                     ensure_ascii=False,

@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>女娲文档蒸馏台</title>
+    <link rel="stylesheet" href="/nvwa/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="card login-card" id="loginCard">
+        <h1>女娲文档蒸馏台</h1>
+        <p class="muted">请先登录后使用 /nvwa 页面能力。</p>
+        <form id="loginForm" class="form">
+          <label>
+            用户名
+            <input id="username" name="username" autocomplete="username" required />
+          </label>
+          <label>
+            密码
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <button type="submit">登录</button>
+          <p class="error" id="loginError"></p>
+        </form>
+      </section>
+
+      <section class="dashboard hidden" id="dashboard">
+        <header class="dashboard-head">
+          <div>
+            <h2>女娲目录文件管理</h2>
+            <p class="muted">上传目录文件后，可直接发起 Hermes 蒸馏。</p>
+          </div>
+          <div class="actions">
+            <button id="refreshBtn" type="button">刷新列表</button>
+            <button id="logoutBtn" type="button" class="ghost">退出</button>
+          </div>
+        </header>
+
+        <section class="card">
+          <h3>上传文件</h3>
+          <form id="uploadForm" class="upload-form">
+            <input id="uploadInput" type="file" required />
+            <button id="uploadBtn" type="submit">上传到监控目录</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <div class="job-head">
+            <h3>蒸馏任务</h3>
+            <button id="startBtn" type="button">立即开始蒸馏</button>
+          </div>
+          <p class="muted" id="jobStatus">等待开始</p>
+          <div class="bar"><div class="bar-inner" id="jobProgress"></div></div>
+          <p class="muted" id="jobMeta">进度 0%</p>
+          <div id="resultWrap" class="hidden">
+            <button id="resultBtn" type="button">下载蒸馏结果</button>
+          </div>
+        </section>
+
+        <section class="card">
+          <div class="list-head">
+            <h3>目录文件（每页 20 条）</h3>
+            <p class="muted" id="listMeta">总数 0</p>
+          </div>
+          <table id="fileTable"></table>
+          <div class="pagination">
+            <button id="prevBtn" type="button" class="ghost">上一页</button>
+            <span id="pageInfo">第 1 / 1 页</span>
+            <button id="nextBtn" type="button" class="ghost">下一页</button>
+          </div>
+        </section>
+
+        <p class="error" id="globalError"></p>
+      </section>
+    </main>
+    <script src="/nvwa/app.js" type="module"></script>
+  </body>
+</html>
